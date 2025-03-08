@@ -1,255 +1,169 @@
---[[
+local highlighter = {}
+local keywords = {
+	lua = {
+		"and", "break", "or", "else", "elseif", "if", "then", "until", "repeat", "while", "do", "for", "in", "end",
+		"local", "return", "function", "export"
+	},
+	rbx = {
+		"game", "workspace", "script", "math", "string", "table", "task", "wait", "select", "next", "Enum",
+		"error", "warn", "tick", "assert", "shared", "loadstring", "tonumber", "tostring", "type",
+		"typeof", "unpack", "print", "Instance", "CFrame", "Vector3", "Vector2", "Color3", "UDim", "UDim2", "Ray", "BrickColor",
+		"OverlapParams", "RaycastParams", "Axes", "Random", "Region3", "Rect", "TweenInfo",
+		"collectgarbage", "not", "utf8", "pcall", "xpcall", "_G", "setmetatable", "getmetatable", "os", "pairs", "ipairs"
+	},
+	operators = {
+		"#", "+", "-", "*", "%", "/", "^", "=", "~", "=", "<", ">", ",", ".", "(", ")", "{", "}", "[", "]", ";", ":"
+	}
+}
 
-	Lexical scanner for creating a sequence of tokens from Lua source code.
+local colors = {
+	numbers = Color3.fromRGB(255, 198, 0),
+	boolean = Color3.fromRGB(214, 128, 23),
+	operator = Color3.fromRGB(232, 210, 40),
+	lua = Color3.fromRGB(160, 87, 248),
+	rbx = Color3.fromRGB(146, 180, 253),
+	str = Color3.fromRGB(56, 241, 87),
+	comment = Color3.fromRGB(103, 110, 149),
+	null = Color3.fromRGB(79, 79, 79),
+	call = Color3.fromRGB(130, 170, 255),
+	self_call = Color3.fromRGB(227, 201, 141),
+	local_color = Color3.fromRGB(199, 146, 234),
+	function_color = Color3.fromRGB(241, 122, 124),
+	self_color = Color3.fromRGB(146, 134, 234),
+	local_property = Color3.fromRGB(129, 222, 255),
+}
 
-	This is a heavily modified and Roblox-optimized version of
-	the original Penlight Lexer module:
-		https://github.com/stevedonovan/Penlight
+local function createKeywordSet(keywords)
+	local keywordSet = {}
+	for _, keyword in ipairs(keywords) do
+		keywordSet[keyword] = true
+	end
+	return keywordSet
+end
 
-	Authors:
-		stevedonovan <https://github.com/stevedonovan> ----------------- Original Penlight lexer author
-		ryanjmulder  <https://github.com/ryanjmulder>  ----------------- Penlight lexer contributer
-		mpeterv      <https://github.com/mpeterv>      ----------------- Penlight lexer contributer
-		Tieske       <https://github.com/Tieske>       ----------------- Penlight lexer contributer
-		boatbomber   <https://github.com/boatbomber>   ----------------- Roblox port, optimizations, and bug fixes
-		Sleitnick    <https://github.com/Sleitnick>    ----------------- Roblox optimizations
+local luaSet = createKeywordSet(keywords.lua)
+local rbxSet = createKeywordSet(keywords.rbx)
+local operatorsSet = createKeywordSet(keywords.operators)
 
-	Usage:
+local function getHighlight(tokens, index)
+	local token = tokens[index]
 
-		local source = "for i = 1,n do end"
+	if colors[token .. "_color"] then
+		return colors[token .. "_color"]
+	end
+
+	if tonumber(token) then
+		return colors.numbers
+	elseif token == "nil" then
+		return colors.null
+	elseif token:sub(1, 2) == "--" then
+		return colors.comment
+	elseif operatorsSet[token] then
+		return colors.operator
+	elseif luaSet[token] then
+		return colors.rbx
+	elseif rbxSet[token] then
+		return colors.lua
+	elseif token:sub(1, 1) == "\"" or token:sub(1, 1) == "\'" then
+		return colors.str
+	elseif token == "true" or token == "false" then
+		return colors.boolean
+	end
+
+	if tokens[index + 1] == "(" then
+		if tokens[index - 1] == ":" then
+			return colors.self_call
+		end
+
+		return colors.call
+	end
+
+	if tokens[index - 1] == "." then
+		if tokens[index - 2] == "Enum" then
+			return colors.rbx
+		end
+
+		return colors.local_property
+	end
+end
+
+function highlighter.run(source)
+	local tokens = {}
+	local currentToken = ""
+	
+	local inString = false
+	local inComment = false
+	local commentPersist = false
+	
+	for i = 1, #source do
+		local character = source:sub(i, i)
 		
-		-- The 'scan' function returns a token iterator:
-		for token,src in lexer.scan(source) do
-			print(token, src)
+		if inComment then
+			if character == "\n" and not commentPersist then
+				table.insert(tokens, currentToken)
+				table.insert(tokens, character)
+				currentToken = ""
+				
+				inComment = false
+			elseif source:sub(i - 1, i) == "]]" and commentPersist then
+				currentToken ..= "]"
+				
+				table.insert(tokens, currentToken)
+				currentToken = ""
+				
+				inComment = false
+				commentPersist = false
+			else
+				currentToken = currentToken .. character
+			end
+		elseif inString then
+			if character == inString and source:sub(i-1, i-1) ~= "\\" or character == "\n" then
+				currentToken = currentToken .. character
+				inString = false
+			else
+				currentToken = currentToken .. character
+			end
+		else
+			if source:sub(i, i + 1) == "--" then
+				table.insert(tokens, currentToken)
+				currentToken = "-"
+				inComment = true
+				commentPersist = source:sub(i + 2, i + 3) == "[["
+			elseif character == "\"" or character == "\'" then
+				table.insert(tokens, currentToken)
+				currentToken = character
+				inString = character
+			elseif operatorsSet[character] then
+				table.insert(tokens, currentToken)
+				table.insert(tokens, character)
+				currentToken = ""
+			elseif character:match("[%w_]") then
+				currentToken = currentToken .. character
+			else
+				table.insert(tokens, currentToken)
+				table.insert(tokens, character)
+				currentToken = ""
+			end
 		end
-
-			> keyword for
-			> iden    i
-			> =       =
-			> number  1
-			> ,       ,
-			> iden    n
-			> keyword do
-			> keyword end
-
-	List of tokens:
-		- keyword
-		- builtin
-		- iden
-		- string
-		- number
-		- space
-		- comment
-
-	Other tokens that don't fall into the above categories
-	will simply be returned as itself. For instance, operators
-	like "+" will simply return "+" as the token.
-
---]]
-
-local lexer = {}
-
-local yield, wrap  = coroutine.yield, coroutine.wrap
-local strfind      = string.find
-local strsub       = string.sub
-local append       = table.insert
-local type         = type
-
-local NUMBER1	= "^[%+%-]?%d+%.?%d*[eE][%+%-]?%d+"
-local NUMBER2	= "^[%+%-]?%d+%.?%d*"
-local NUMBER3	= "^0x[%da-fA-F]+"
-local NUMBER4	= "^%d+%.?%d*[eE][%+%-]?%d+"
-local NUMBER5	= "^%d+%.?%d*"
-local IDEN		= "^[%a_][%w_]*"
-local WSPACE	= "^%s+"
-local STRING1	= "^(['\"])%1"							--Empty String
-local STRING2	= [[^(['"])(\*)%2%1]]
-local STRING3	= [[^(['"]).-[^\](\*)%2%1]]
-local STRING4	= "^(['\"]).-.*"						--Incompleted String
-local STRING5	= "^%[(=*)%[.-%]%1%]"					--Multiline-String
-local STRING6	= "^%[%[.-.*"							--Incompleted Multiline-String
-local CHAR1		= "^''"
-local CHAR2		= [[^'(\*)%1']]
-local CHAR3		= [[^'.-[^\](\*)%1']]
-local PREPRO	= "^#.-[^\\]\n"
-local MCOMMENT1	= "^%-%-%[(=*)%[.-%]%1%]"				--Completed Multiline-Comment
-local MCOMMENT2	= "^%-%-%[%[.-.*"						--Incompleted Multiline-Comment
-local SCOMMENT1	= "^%-%-.-\n"							--Completed Singleline-Comment
-local SCOMMENT2	= "^%-%-.-.*"							--Incompleted Singleline-Comment
-
-local lua_keyword = {
-	["and"] = true,  ["break"] = true,  ["do"] = true,      ["else"] = true,      ["elseif"] = true,
-	["end"] = true,  ["false"] = true,  ["for"] = true,     ["function"] = true,  ["if"] = true,
-	["in"] = true,   ["local"] = true,  ["nil"] = true,     ["not"] = true,       ["while"] = true,
-	["or"] = true,   ["repeat"] = true, ["return"] = true,  ["then"] = true,      ["true"] = true,
-	["self"] = true, ["until"] = true
-}
-
-local lua_builtin = {
-	["assert"] = true;["collectgarbage"] = true;["error"] = true;["_G"] = true;
-	["gcinfo"] = true;["getfenv"] = true;["getmetatable"] = true;["ipairs"] = true;
-	["loadstring"] = true;["newproxy"] = true;["next"] = true;["pairs"] = true;
-	["pcall"] = true;["print"] = true;["rawequal"] = true;["rawget"] = true;["rawset"] = true;
-	["select"] = true;["setfenv"] = true;["setmetatable"] = true;["tonumber"] = true;
-	["tostring"] = true;["type"] = true;["unpack"] = true;["_VERSION"] = true;["xpcall"] = true;
-	["delay"] = true;["elapsedTime"] = true;["require"] = true;["spawn"] = true;["tick"] = true;
-	["time"] = true;["typeof"] = true;["UserSettings"] = true;["wait"] = true;["warn"] = true;
-	["game"] = true;["Enum"] = true;["script"] = true;["shared"] = true;["workspace"] = true;
-	["Axes"] = true;["BrickColor"] = true;["CFrame"] = true;["Color3"] = true;["ColorSequence"] = true;
-	["ColorSequenceKeypoint"] = true;["Faces"] = true;["Instance"] = true;["NumberRange"] = true;
-	["NumberSequence"] = true;["NumberSequenceKeypoint"] = true;["PhysicalProperties"] = true;
-	["Random"] = true;["Ray"] = true;["Rect"] = true;["Region3"] = true;["Region3int16"] = true;
-	["TweenInfo"] = true;["UDim"] = true;["UDim2"] = true;["Vector2"] = true;["Vector3"] = true;
-	["Vector3int16"] = true;["next"] = true;
-	["os"] = true;
-		--["os.time"] = true;["os.date"] = true;["os.difftime"] = true;
-	["debug"] = true;
-		--["debug.traceback"] = true;["debug.profilebegin"] = true;["debug.profileend"] = true;
-	["math"] = true;
-		--["math.abs"] = true;["math.acos"] = true;["math.asin"] = true;["math.atan"] = true;["math.atan2"] = true;["math.ceil"] = true;["math.clamp"] = true;["math.cos"] = true;["math.cosh"] = true;["math.deg"] = true;["math.exp"] = true;["math.floor"] = true;["math.fmod"] = true;["math.frexp"] = true;["math.ldexp"] = true;["math.log"] = true;["math.log10"] = true;["math.max"] = true;["math.min"] = true;["math.modf"] = true;["math.noise"] = true;["math.pow"] = true;["math.rad"] = true;["math.random"] = true;["math.randomseed"] = true;["math.sign"] = true;["math.sin"] = true;["math.sinh"] = true;["math.sqrt"] = true;["math.tan"] = true;["math.tanh"] = true;
-	["coroutine"] = true;
-		--["coroutine.create"] = true;["coroutine.resume"] = true;["coroutine.running"] = true;["coroutine.status"] = true;["coroutine.wrap"] = true;["coroutine.yield"] = true;
-	["string"] = true;
-		--["string.byte"] = true;["string.char"] = true;["string.dump"] = true;["string.find"] = true;["string.format"] = true;["string.len"] = true;["string.lower"] = true;["string.match"] = true;["string.rep"] = true;["string.reverse"] = true;["string.sub"] = true;["string.upper"] = true;["string.gmatch"] = true;["string.gsub"] = true;
-	["table"] = true;
-		--["table.concat"] = true;["table.insert"] = true;["table.remove"] = true;["table.sort"] = true;
-}
-
-local function tdump(tok)
-	return yield(tok, tok)
-end
-
-local function ndump(tok)
-	return yield("number", tok)
-end
-
-local function sdump(tok)
-	return yield("string", tok)
-end
-
-local function cdump(tok)
-	return yield("comment", tok)
-end
-
-local function wsdump(tok)
-	return yield("space", tok)
-end
-
-local function lua_vdump(tok)
-	if (lua_keyword[tok]) then
-		return yield("keyword", tok)
-	elseif (lua_builtin[tok]) then
-		return yield("builtin", tok)
-	else
-		return yield("iden", tok)
 	end
-end
-
-local lua_matches = {
-	{IDEN,      lua_vdump},        -- Indentifiers
-	{WSPACE,    wsdump},           -- Whitespace
-	{NUMBER3,   ndump},            -- Numbers
-	{NUMBER4,   ndump},
-	{NUMBER5,   ndump},
-	{STRING1,   sdump},            -- Strings
-	{STRING2,   sdump},
-	{STRING3,   sdump},
-	{STRING4,   sdump},
-	{STRING5,   sdump},            -- Multiline-Strings
-	{STRING6,   sdump},            -- Multiline-Strings
 	
-	{MCOMMENT1, cdump},            -- Multiline-Comments
-	{MCOMMENT2, cdump},			
-	{SCOMMENT1, cdump},            -- Singleline-Comments
-	{SCOMMENT2, cdump},
+	table.insert(tokens, currentToken)
+
+	local highlighted = {}
 	
-	{"^==",     tdump},            -- Operators
-	{"^~=",     tdump},
-	{"^<=",     tdump},
-	{"^>=",     tdump},
-	{"^%.%.%.", tdump},
-	{"^%.%.",   tdump},
-	{"^.",      tdump}
-}
+	for i, token in ipairs(tokens) do
+		local highlight = getHighlight(tokens, i)
 
-local num_lua_matches = #lua_matches
-
-
---- Create a plain token iterator from a string.
--- @tparam string s a string.
-function lexer.scan(s)
-
-	local function lex(first_arg)
-
-		local line_nr = 0
-		local sz = #s
-		local idx = 1
-
-		-- res is the value used to resume the coroutine.
-		local function handle_requests(res)
-			while (res) do
-				local tp = type(res)
-				-- Insert a token list:
-				if (tp == "table") then
-					res = yield("", "")
-					for i = 1,#res do
-						local t = res[i]
-						res = yield(t[1], t[2])
-					end
-				elseif (tp == "string") then -- Or search up to some special pattern:
-					local i1, i2 = strfind(s, res, idx)
-					if (i1) then
-						local tok = strsub(s, i1, i2)
-						idx = (i2 + 1)
-						res = yield("", tok)
-					else
-						res = yield("", "")
-						idx = (sz + 1)
-					end
-				else
-					res = yield(line_nr, idx)
-				end
-			end
+		if highlight then
+			local syntax = string.format("<font color = \"#%s\">%s</font>", highlight:ToHex(), token:gsub("<", "&lt;"):gsub(">", "&gt;"))
+			
+			table.insert(highlighted, syntax)
+		else
+			table.insert(highlighted, token)
 		end
-
-		handle_requests(first_arg)
-		line_nr = 1
-
-		while (true) do
-
-			if (idx > sz) then
-				while (true) do
-					handle_requests(yield())
-				end
-			end
-
-			for i = 1,num_lua_matches do
-				local m = lua_matches[i]
-				local pat = m[1]
-				local fun = m[2]
-				local findres = {strfind(s, pat, idx)}
-				local i1, i2 = findres[1], findres[2]
-				if (i1) then
-					local tok = strsub(s, i1, i2)
-					idx = (i2 + 1)
-					lexer.finished = (idx > sz)
-					local res = fun(tok, findres)
-					if (tok:find("\n")) then
-						-- Update line number:
-						local _,newlines = tok:gsub("\n", {})
-						line_nr = (line_nr + newlines)
-					end
-					handle_requests(res)
-					break
-				end
-			end
-
-		end
-
 	end
 
-	return wrap(lex)
-
+	return table.concat(highlighted)
 end
 
-return lexer
+return highlighter
